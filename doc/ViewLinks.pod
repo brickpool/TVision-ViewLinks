@@ -1,0 +1,358 @@
+=encoding utf8
+
+=head1 NAME
+
+TVision::ViewLinks - Referenzfreie TGroup/TView-Verkettung im Perl-Port
+mittels FieldHash + Objekt-IDs (owner/next/last/current)
+
+=head1 SYNOPSIS
+
+    use strict;
+    use warnings;
+    use Hash::Util::FieldHash qw(fieldhashes id register id_2obj);
+
+    # Pro-Objekt-Felder (Schlüssel sind die Perl-Wrapper für Views/Groups)
+    fieldhashes \my (%owner_id, %next_id, %last_id, %current_id);
+
+    # --- Registrierung (einmal pro neuem Wrapper-Objekt) ---
+    sub _reg { my ($obj) = @_; register($obj); $obj }
+    sub _id  { my ($obj) = @_; _reg($obj); return id $obj }
+
+    # --- Link setzen (nur noch skalare IDs, keine Referenzen) ---
+    sub set_owner_id   { my ($view,  $group) = @_; $owner_id{$view}    = _id($group) }
+    sub set_next_id    { my ($view,  $next)  = @_; $next_id{$view}     = _id($next)  }
+    sub set_last_id    { my ($group, $last)  = @_; $last_id{$group}    = _id($last)  }
+    sub set_current_id { my ($group, $cur)   = @_; $current_id{$group} = _id($cur)   }
+
+    # --- Rückauflösung (ID -> Objekt) ---
+    sub owner_of   { my ($view)  = @_; my $i = $owner_id{$view};    defined $i ? id_2obj($i) : undef }
+    sub next_of    { my ($view)  = @_; my $i = $next_id{$view};     defined $i ? id_2obj($i) : undef }
+    sub last_of    { my ($group) = @_; my $i = $last_id{$group};    defined $i ? id_2obj($i) : undef }
+    sub current_of { my ($group) = @_; my $i = $current_id{$group}; defined $i ? id_2obj($i) : undef }
+
+    # --- Ringlisten-Konvention wie Turbo Vision: first == last->next ---
+    sub first_of {
+        my ($group) = @_;
+        my $last = last_of($group) or return undef;     # leere Gruppe
+        return next_of($last);
+    }
+
+    # Beispiel: alle Views in Z-Reihenfolge aufzählen
+    sub children {
+        my ($group) = @_;
+        my $first = first_of($group) or return ();
+        my (@out, $v) = ((), $first);
+        do { push @out, $v; $v = next_of($v) } while defined($v) && $v != $first;
+        return @out;
+    }
+
+=head1 BESCHREIBUNG
+
+Diese Dokumentation beschreibt, wie die klassische TVision-Struktur
+C<TGroup>/C<TView> mit den Feldern C<owner>, C<next>, C<last>, C<current>
+in Perl C<referenzfrei> abgebildet werden kann, ohne dabei die
+Semantik der Originalbibliothek zu verlieren:
+
+=over 2
+
+=item *
+C<owner> – Parent-Container (C<TGroup>) eines Views
+
+=item *
+C<next>  – nächster (Child-)View (Ringliste)
+
+=item *
+C<last>  – Zeiger in C<TGroup> auf das letzte View (Anker der Ringliste)
+
+=item *
+C<current> – aktives View (Fokus/Selektion)
+
+=back
+
+Statt Perl-Referenzen werden nur noch C<IDs> (numerische Schlüssel)
+gespeichert. Die Auflösung ID in Objekt erfolgt über die
+C<Hash::Util::FieldHash>-Registry (C<register>, C<id>, C<id_2obj>).
+Dadurch bleiben Datenstrukturen referenzfrei, räumen sich bei
+Objektlebenszyklus korrekt auf (GC-sicher) und bilden die TVision-Logik
+eins-zu-eins nach.
+
+=head2 Ziele
+
+=over 2
+
+=item *
+Keine zyklischen Perl-Referenzen zwischen Wrapper-Objekten
+
+=item *
+Automatisches Aufräumen beim GC (keine expliziten DESTROY-Sweeper)
+
+=item *
+Beibehaltung der TVision-Invarianten (Ringliste, Z-Reihenfolge, Owner-Kette)
+
+=item *
+Threadsichere ID in Objekt-Rückauflösung
+=back
+
+=head1 DATENMODELL
+
+=over 2
+
+=item * C<%owner_id>:    $owner_id{$view}    = id($group)
+
+=item * C<%next_id>:     $next_id{$view}     = id($next_view)
+
+=item * C<%last_id>:     $last_id{$group}    = id($last_child)
+
+=item * C<%current_id>:  $current_id{$group} = id($current_child)
+
+=back
+
+Schlüssel der FieldHashes sind die Perl-Wrapper der TVision-Objekte
+(View/Group). Werte sind I<nur> IDs (Integers), C<undef> bedeutet 
+I<nicht gesetzt>.
+
+=head1 LEBENSZYKLUS & GARBAGE COLLECTION
+
+=over 2
+
+=item *
+C<fieldhashes> koppelt Feldwerte an die Lebensdauer des Schlüssels
+(= des Wrapper-Objekts). Stirbt der Schlüssel, verschwinden die
+Einträge automatisch. (Siehe L</REFERENZEN>.)
+
+=item *
+C<register($obj)> registriert ein Objekt für C<id_2obj()>. Die Registry
+verwendet schwache Verweise (und ist threadsicher. Beim Thread-Start
+werden Referenzen konsistent ersetzt).
+
+=item *
+Hinweis: Bereits beim Erzeugen eines Wrappers registrieren
+(z.B. im Konstruktor), damit ID-Rückauflösung immer verfügbar ist.
+
+=back
+
+=head1 API-BAUSTEINE (VORSCHLAG)
+
+=head2 Setzen & Lesen
+
+    set_owner_id($view,  $group)
+    set_next_id($view,   $next)
+    set_last_id($group,  $last)
+    set_current_id($group, $cur)
+
+    owner_of($view)      -> $group|undef
+    next_of($view)       -> $view|undef
+    last_of($group)      -> $view|undef
+    current_of($group)   -> $view|undef
+    first_of($group)     -> $view|undef   # synonym: next_of(last_of)
+
+=head2 Einfügen/Entfernen in der Ringliste
+
+Die folgenden Routinen bilden die TVision-Semantik nach
+(Ringliste, Anker C<last>, I<< first == last->next >>).
+
+=over 2
+
+=item C<insert_after($group, $target, $new_view)>
+
+Fügt C<$new_view> hinter C<$target> ein. Passt C<owner> und ggf. C<last>
+an, falls C<$target> der letzte View war.
+
+=item C<insert_first($group, $new_view)>
+
+Fügt das erste View ein. Falls die Gruppe leer ist, entsteht ein
+Einzelelement-Ring (C<next(new) == new>) und C<last(group) == new>.
+
+=item C<remove_view($group, $view)>
+
+Entfernt C<$view> aus dem Ring. Bei letztem Element wird C<last(group)>
+auf C<undef> gesetzt; ansonsten ggf. auf den Vorgänger aktualisiert.
+Setzt C<owner(view)>/C<next(view)> auf C<undef>.
+
+=back
+
+Beispiel-Implementierungen:
+
+    sub insert_after {
+        my ($group, $target, $new_view) = @_;
+        my $next = next_of($target) // $target;     # Einzel-View?
+        set_next_id($new_view, $next);
+        set_next_id($target,   $new_view);
+        set_owner_id($new_view, $group);
+        if ($target == last_of($group)) {
+            set_last_id($group, $new_view);
+        }
+    }
+
+    sub insert_first {
+        my ($group, $new_view) = @_;
+        if (my $last = last_of($group)) {
+            insert_after($group, $last, $new_view);
+        } else {
+            set_next_id($new_view, $new_view);  # Ring mit 1 Element
+            set_owner_id($new_view, $group);
+            set_last_id($group, $new_view);
+        }
+    }
+
+    sub remove_view {
+        my ($group, $view) = @_;
+        my $last = last_of($group) or return;
+        my $pred;
+
+        my $v = next_of($last);
+        do {
+            if (next_of($v) == $view) { $pred = $v; last }
+            $v = next_of($v);
+        } while $v != next_of($last);
+        return unless $pred;   # nicht gefunden
+
+        my $view_next = next_of($view);
+        set_next_id($pred, $view_next);
+
+        if ($view == $last) {
+            ($view_next == $view) ? set_last_id($group, undef)   # war einziges View
+                                  : set_last_id($group, $pred);
+        }
+
+        set_owner_id($view, undef);
+        set_next_id($view,  undef);
+    }
+
+=head1 INVARIANTEN
+
+=over 2
+
+=item *
+C<$group> leer  ->  C<last($group) == undef>, C<first($group) == undef>
+
+=item *
+C<$group> nicht leer  ->  C<first($group) == next(last($group))>
+
+=item *
+Einzelelement-Ring  ->  C<next(first) == first> und C<last == first>
+
+=item *
+Alle Views eines C<$group> bilden eine kreisförmige einfach verkettete Liste
+über C<next>; die Z-Reihenfolge entspricht der TVision-Zeichenreihenfolge.
+
+=back
+
+=head1 THREADING
+
+Die FieldHash-Registry (C<register>, C<id>, C<id_2obj>) ist threadsicher:
+Beim Erzeugen neuer Threads werden Referenzobjekte intern neu gebunden,
+sodass ID in Objekt-Auflösung konsistent bleibt. (Siehe L</REFERENZEN>.)
+
+=head1 FEHLERBEHANDLUNG
+
+=over 2
+
+=item *
+Rückgabe von C<undef> bei toten/fehlenden IDs ist idiomatisch (das Zielobjekt 
+kann inzwischen vom Garbage Collector freigegeben sein. In diesem Fall liefert 
+die Rückauflösung C<id_2obj($id)> C<undef>, weil es kein lebendes Objekt mehr 
+zu dieser ID gibt). Um es strikter zu machen, müssen die Getter bei 
+Inkonsistenzen (z.B. I<dangling ID>) eine Ausnahmen via (C<croak>) werfen.
+
+=item *
+Hinweis: Dafür sorgen, dass alle neuen Wrapper frühzeitig C<register> aufrufen
+(z.B. im Konstruktor), sonst liefert C<id_2obj> C<undef>.
+
+=back
+
+=head1 MIGRATION (von Referenzen zu IDs)
+
+=over 2
+
+=item 1
+Bestehende C<%owner>, C<%next> ... (mit Werten als Referenz) auflösen.
+
+=item 2
+Neue FieldHashes C<%owner_id>, C<%next_id> ... anlegen.
+
+=item 3
+Beim Link setzen C<id($obj)> statt der Referenz speichern.
+
+=item 4
+An Lese-Callsites C<id_2obj($id)> einführen (gekapselt in C<owner_of()>, ...).
+
+=item 5
+Testen mit Ring-Szenarien: leer, 1 View, 2 Views, N Views; Einfügen,
+Entfernen, Fokuswechsel, Reihenfolge-Änderungen.
+
+=back
+
+=head1 TESTSTRATEGIE
+
+=over 2
+
+=item *
+Konsistenz der Invarianten (s.o.) nach jeder Operation prüfen.
+
+=item *
+Fokuspfade (C<current>) gegen Einfügen/Entfernen testen.
+
+=item *
+GC-Szenario: Wrapper fallenlassen und sicherstellen, dass FieldHashes
+keine Leichen enthalten (z.B. via Zählung der Views oder expliziten
+Sanity-Checker).
+
+=item *
+Threads (falls genutzt): in einem Worker-Thread Ring aufbauen, im
+Hauptthread lesen.
+
+=back
+
+=head1 DESIGN-ABWÄGUNGEN
+
+=over 2
+
+=item *
+C<id>/Registry vs. C<refaddr> pur:
+Die Registry liefert eine sichere ID in Objekt-Rückauflösung und
+berücksichtigt GC/Threading. Reines C<refaddr> kann historisch
+wiederverwendet werden, wenn Objekte freigegeben wurden; vermeide das.
+
+=item *
+Kein Einsatz von C<Scalar::Util::weaken> nötig:
+Referenzen werden gar nicht mehr gespeichert; zirkuläre Referenzen sind
+ausgeschlossen.
+
+=back
+
+=head1 SIEHE AUCH
+
+=over 2
+
+=item *
+Turbo Vision (Struktur von C<TView>/C<TGroup>, Felder C<owner>, C<next>,
+C<last>, C<current>): 
+L<https://github.com/magiblot/tvision/blob/master/include/tvision/views.h>
+
+=item *
+C<Hash::Util::FieldHash> (FieldHashes, Registry C<register>, C<id>, C<id_2obj>):
+L<https://perldoc.perl.org/Hash::Util::FieldHash>
+
+=item *
+C<Scalar::Util> (C<refaddr>, C<weaken>, etc.):
+L<https://perldoc.perl.org/Scalar::Util>
+
+=back
+
+=head1 ANMERKUNGEN
+
+Dieses Dokument richtet sich explizit an eine C<direkte Perl-Portierung> von
+TVision (ohne eine Perl-Glue-Variante). Die oben skizzierte API und die
+Datenhaltung (IDs statt Referenzen) bilden die Original-Semantik nach,
+lassen aber freie Hand bei der Gestaltung der Wrapper-Klassen und
+der Integration in das Haupt-Repository.
+
+=head1 COPYRIGHT AND LICENSE
+
+Copyright (c) 2025, J. Schneider.
+
+Dieses Dokument darf unter den gleichen Bedingungen wie das Projekt 
+F<github.com/brickpool/TVision> verwendet und angepasst werden.
+
+=cut
