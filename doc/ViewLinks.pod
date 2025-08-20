@@ -1,3 +1,5 @@
+=pod
+
 =encoding utf8
 
 =head1 NAME
@@ -12,37 +14,37 @@ mittels FieldHash + Objekt-IDs (owner/next/last/current)
     use Hash::Util::FieldHash qw(fieldhashes id register id_2obj);
 
     # Pro-Objekt-Felder (Schlüssel sind die Perl-Wrapper für Views/Groups)
-    fieldhashes \my (%owner_id, %next_id, %last_id, %current_id);
+    fieldhashes \my (%OWNER, %NEXT, %LAST, %CURRENT);
 
     # --- Registrierung (einmal pro neuem Wrapper-Objekt) ---
     sub _reg { my ($obj) = @_; register($obj); $obj }
     sub _id  { my ($obj) = @_; _reg($obj); return id $obj }
 
     # --- Link setzen (nur noch skalare IDs, keine Referenzen) ---
-    sub set_owner_id   { my ($view,  $group) = @_; $owner_id{$view}    = _id($group) }
-    sub set_next_id    { my ($view,  $next)  = @_; $next_id{$view}     = _id($next)  }
-    sub set_last_id    { my ($group, $last)  = @_; $last_id{$group}    = _id($last)  }
-    sub set_current_id { my ($group, $cur)   = @_; $current_id{$group} = _id($cur)   }
+    sub set_owner   { my ($view,  $group) = @_; $OWNER{$view}    = _id($group) }
+    sub set_next    { my ($view,  $next)  = @_; $NEXT{$view}     = _id($next)  }
+    sub set_last    { my ($group, $last)  = @_; $LAST{$group}    = _id($last)  }
+    sub set_current { my ($group, $cur)   = @_; $CURRENT{$group} = _id($cur)   }
 
     # --- Rückauflösung (ID -> Objekt) ---
-    sub owner_of   { my ($view)  = @_; my $i = $owner_id{$view};    defined $i ? id_2obj($i) : undef }
-    sub next_of    { my ($view)  = @_; my $i = $next_id{$view};     defined $i ? id_2obj($i) : undef }
-    sub last_of    { my ($group) = @_; my $i = $last_id{$group};    defined $i ? id_2obj($i) : undef }
-    sub current_of { my ($group) = @_; my $i = $current_id{$group}; defined $i ? id_2obj($i) : undef }
+    sub get_owner   { my ($view)  = @_; my $i = $OWNER{$view};    defined $i ? id_2obj($i) : undef }
+    sub get_next    { my ($view)  = @_; my $i = $NEXT{$view};     defined $i ? id_2obj($i) : undef }
+    sub get_last    { my ($group) = @_; my $i = $LAST{$group};    defined $i ? id_2obj($i) : undef }
+    sub get_current { my ($group) = @_; my $i = $CURRENT{$group}; defined $i ? id_2obj($i) : undef }
 
     # --- Ringlisten-Konvention wie Turbo Vision: first == last->next ---
-    sub first_of {
+    sub get_first {
         my ($group) = @_;
-        my $last = last_of($group) or return undef;     # leere Gruppe
-        return next_of($last);
+        my $last = get_last($group) or return undef;     # leere Gruppe
+        return get_next($last);
     }
 
     # Beispiel: alle Views in Z-Reihenfolge aufzählen
     sub children {
         my ($group) = @_;
-        my $first = first_of($group) or return ();
+        my $first = get_first($group) or return ();
         my (@out, $v) = ((), $first);
-        do { push @out, $v; $v = next_of($v) } while defined($v) && $v != $first;
+        do { push @out, $v; $v = get_next($v) } while defined($v) && $v != $first;
         return @out;
     }
 
@@ -50,27 +52,27 @@ mittels FieldHash + Objekt-IDs (owner/next/last/current)
 
 Diese Dokumentation beschreibt, wie die klassische TVision-Struktur
 C<TGroup>/C<TView> mit den Feldern C<owner>, C<next>, C<last>, C<current>
-in Perl C<referenzfrei> abgebildet werden kann, ohne dabei die
+in Perl I<referenzfrei> abgebildet werden kann, ohne dabei die
 Semantik der Originalbibliothek zu verlieren:
 
 =over 2
 
 =item *
-C<owner> – Parent-Container (C<TGroup>) eines Views
+C<owner> - Parent-Container (C<TGroup>) eines Views
 
 =item *
-C<next>  – nächster (Child-)View (Ringliste)
+C<next> - nächster (Child-)View (Ringliste)
 
 =item *
-C<last>  – Zeiger in C<TGroup> auf das letzte View (Anker der Ringliste)
+C<last> - Zeiger in C<TGroup> auf das letzte View (Anker der Ringliste)
 
 =item *
-C<current> – aktives View (Fokus/Selektion)
+C<current> - aktiver View (Fokus/Selektion)
 
 =back
 
 Statt Perl-Referenzen werden nur noch C<IDs> (numerische Schlüssel)
-gespeichert. Die Auflösung ID in Objekt erfolgt über die
+gespeichert. Die Auflösung der ID vom Objekt erfolgt über die
 C<Hash::Util::FieldHash>-Registry (C<register>, C<id>, C<id_2obj>).
 Dadurch bleiben Datenstrukturen referenzfrei, räumen sich bei
 Objektlebenszyklus korrekt auf (GC-sicher) und bilden die TVision-Logik
@@ -90,20 +92,21 @@ Automatisches Aufräumen beim GC (keine expliziten DESTROY-Sweeper)
 Beibehaltung der TVision-Invarianten (Ringliste, Z-Reihenfolge, Owner-Kette)
 
 =item *
-Threadsichere ID in Objekt-Rückauflösung
+Threadsichere ID in Objekt-Rückauflösung (ggf. für zukünftige Versionen)
+
 =back
 
 =head1 DATENMODELL
 
 =over 2
 
-=item * C<%owner_id>:    $owner_id{$view}    = id($group)
+=item * C<%OWNER>:    $OWNER{$view}    = id($group)
 
-=item * C<%next_id>:     $next_id{$view}     = id($next_view)
+=item * C<%NEXT>:     $NEXT{$view}     = id($next_view)
 
-=item * C<%last_id>:     $last_id{$group}    = id($last_child)
+=item * C<%LAST>:     $LAST{$group}    = id($last_child)
 
-=item * C<%current_id>:  $current_id{$group} = id($current_child)
+=item * C<%CURRENT>:  $CURRENT{$group} = id($current_child)
 
 =back
 
@@ -126,8 +129,8 @@ verwendet schwache Verweise (und ist threadsicher. Beim Thread-Start
 werden Referenzen konsistent ersetzt).
 
 =item *
-Hinweis: Bereits beim Erzeugen eines Wrappers registrieren
-(z.B. im Konstruktor), damit ID-Rückauflösung immer verfügbar ist.
+Hinweis: Bereits beim Erzeugen eines Wrappers sollte das Obkect registriert 
+werden (z.B. im Konstruktor), damit ID-Rückauflösung immer verfügbar ist.
 
 =back
 
@@ -135,16 +138,16 @@ Hinweis: Bereits beim Erzeugen eines Wrappers registrieren
 
 =head2 Setzen & Lesen
 
-    set_owner_id($view,  $group)
-    set_next_id($view,   $next)
-    set_last_id($group,  $last)
-    set_current_id($group, $cur)
+    set_owner($view,  $group)
+    set_next($view,   $next)
+    set_last($group,  $last)
+    set_current($group, $cur)
 
-    owner_of($view)      -> $group|undef
-    next_of($view)       -> $view|undef
-    last_of($group)      -> $view|undef
-    current_of($group)   -> $view|undef
-    first_of($group)     -> $view|undef   # synonym: next_of(last_of)
+    get_owner($view)      -> $group|undef
+    get_next($view)       -> $view|undef
+    get_last($group)      -> $view|undef
+    get_current($group)   -> $view|undef
+    get_first($group)     -> $view|undef   # synonym: get_next(get_last)
 
 =head2 Einfügen/Entfernen in der Ringliste
 
@@ -175,48 +178,48 @@ Beispiel-Implementierungen:
 
     sub insert_after {
         my ($group, $target, $new_view) = @_;
-        my $next = next_of($target) // $target;     # Einzel-View?
-        set_next_id($new_view, $next);
-        set_next_id($target,   $new_view);
-        set_owner_id($new_view, $group);
-        if ($target == last_of($group)) {
-            set_last_id($group, $new_view);
+        my $next = get_next($target) // $target;     # Einzel-View?
+        set_next($new_view, $next);
+        set_next($target,   $new_view);
+        set_owner($new_view, $group);
+        if ($target == get_last($group)) {
+            set_last($group, $new_view);
         }
     }
 
     sub insert_first {
         my ($group, $new_view) = @_;
-        if (my $last = last_of($group)) {
+        if (my $last = get_last($group)) {
             insert_after($group, $last, $new_view);
         } else {
-            set_next_id($new_view, $new_view);  # Ring mit 1 Element
-            set_owner_id($new_view, $group);
-            set_last_id($group, $new_view);
+            set_next($new_view, $new_view);  # Ring mit 1 Element
+            set_owner($new_view, $group);
+            set_last($group, $new_view);
         }
     }
 
     sub remove_view {
         my ($group, $view) = @_;
-        my $last = last_of($group) or return;
+        my $last = get_last($group) or return;
         my $pred;
 
-        my $v = next_of($last);
+        my $v = get_next($last);
         do {
-            if (next_of($v) == $view) { $pred = $v; last }
-            $v = next_of($v);
-        } while $v != next_of($last);
+            if (get_next($v) == $view) { $pred = $v; last }
+            $v = get_next($v);
+        } while $v != get_next($last);
         return unless $pred;   # nicht gefunden
 
-        my $view_next = next_of($view);
-        set_next_id($pred, $view_next);
+        my $view_next = get_next($view);
+        set_next($pred, $view_next);
 
         if ($view == $last) {
-            ($view_next == $view) ? set_last_id($group, undef)   # war einziges View
-                                  : set_last_id($group, $pred);
+            ($view_next == $view) ? set_last($group, undef)   # war einziges View
+                                  : set_last($group, $pred);
         }
 
-        set_owner_id($view, undef);
-        set_next_id($view,  undef);
+        set_owner($view, undef);
+        set_next($view,  undef);
     }
 
 =head1 INVARIANTEN
@@ -224,23 +227,24 @@ Beispiel-Implementierungen:
 =over 2
 
 =item *
-C<$group> leer  ->  C<last($group) == undef>, C<first($group) == undef>
+C<$group> leer -> C<last($group) == undef>, C<first($group) == undef>
 
 =item *
-C<$group> nicht leer  ->  C<first($group) == next(last($group))>
+C<$group> nicht leer -> C<first($group) == next(last($group))>
 
 =item *
-Einzelelement-Ring  ->  C<next(first) == first> und C<last == first>
+Einzelelement-Ring -> C<next(first) == first> und C<last == first>
 
 =item *
-Alle Views eines C<$group> bilden eine kreisförmige einfach verkettete Liste
-über C<next>; die Z-Reihenfolge entspricht der TVision-Zeichenreihenfolge.
+Alle Views einer C<$group> bilden eine kreisförmige einfach verkettete Liste
+über C<next>; die Z-Reihenfolge entspricht der TVision-View-Reihenfolge.
 
 =back
 
 =head1 THREADING
 
-Die FieldHash-Registry (C<register>, C<id>, C<id_2obj>) ist threadsicher:
+Falls Threading jemals ein Thema wird so ist eine Nutzung mit 
+FieldHash-Registry (C<register>, C<id>, C<id_2obj>) threadsicher:
 Beim Erzeugen neuer Threads werden Referenzobjekte intern neu gebunden,
 sodass ID in Objekt-Auflösung konsistent bleibt. (Siehe L</REFERENZEN>.)
 
@@ -252,12 +256,12 @@ sodass ID in Objekt-Auflösung konsistent bleibt. (Siehe L</REFERENZEN>.)
 Rückgabe von C<undef> bei toten/fehlenden IDs ist idiomatisch (das Zielobjekt 
 kann inzwischen vom Garbage Collector freigegeben sein. In diesem Fall liefert 
 die Rückauflösung C<id_2obj($id)> C<undef>, weil es kein lebendes Objekt mehr 
-zu dieser ID gibt). Um es strikter zu machen, müssen die Getter bei 
+zu dieser ID gibt). Um es strikter zu machen, müssten die Getter bei 
 Inkonsistenzen (z.B. I<dangling ID>) eine Ausnahmen via (C<croak>) werfen.
 
 =item *
 Hinweis: Dafür sorgen, dass alle neuen Wrapper frühzeitig C<register> aufrufen
-(z.B. im Konstruktor), sonst liefert C<id_2obj> C<undef>.
+(z.B. im Konstruktor), sonst liefert C<id_2obj> C<undef> zurück.
 
 =back
 
@@ -266,16 +270,16 @@ Hinweis: Dafür sorgen, dass alle neuen Wrapper frühzeitig C<register> aufrufen
 =over 2
 
 =item 1
-Bestehende C<%owner>, C<%next> ... (mit Werten als Referenz) auflösen.
+Bestehende C<owner>, C<next> ... (mit Werten als Referenz) auflösen.
 
 =item 2
-Neue FieldHashes C<%owner_id>, C<%next_id> ... anlegen.
+Neue FieldHashes C<%OWNER>, C<%NEXT> ... anlegen.
 
 =item 3
 Beim Link setzen C<id($obj)> statt der Referenz speichern.
 
 =item 4
-An Lese-Callsites C<id_2obj($id)> einführen (gekapselt in C<owner_of()>, ...).
+An Lese-Callsites C<id_2obj($id)> einführen (gekapselt in C<get_owner()>, ...).
 
 =item 5
 Testen mit Ring-Szenarien: leer, 1 View, 2 Views, N Views; Einfügen,
@@ -299,7 +303,7 @@ keine Leichen enthalten (z.B. via Zählung der Views oder expliziten
 Sanity-Checker).
 
 =item *
-Threads (falls genutzt): in einem Worker-Thread Ring aufbauen, im
+Threads (falls doch genutzt): in einem Worker-Thread Ring aufbauen, im
 Hauptthread lesen.
 
 =back
@@ -309,10 +313,10 @@ Hauptthread lesen.
 =over 2
 
 =item *
-C<id>/Registry vs. C<refaddr> pur:
+C<id>-Registry vs. C<refaddr> pur:
 Die Registry liefert eine sichere ID in Objekt-Rückauflösung und
-berücksichtigt GC/Threading. Reines C<refaddr> kann historisch
-wiederverwendet werden, wenn Objekte freigegeben wurden; vermeide das.
+berücksichtigt GC/Threading. Reines C<refaddr> könnte wiederverwendet werden, 
+wenn Objekte freigegeben wurden; ich will es daher vermeide.
 
 =item *
 Kein Einsatz von C<Scalar::Util::weaken> nötig:
@@ -321,7 +325,7 @@ ausgeschlossen.
 
 =back
 
-=head1 SIEHE AUCH
+=head1 REFERENZEN
 
 =over 2
 
