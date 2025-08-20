@@ -3,50 +3,52 @@ package TVision::ViewLinks;
 use strict;
 use warnings;
 
-our $VERSION = '0.01';
+our $VERSION = '0.02';
 
 use Exporter 'import';
 our @EXPORT_OK = qw(
-  set_owner_id set_next_id set_last_id set_current_id
-  owner_of next_of last_of current_of first_of children
-  insert_after insert_first remove_view sanity_check
+  set_owner set_next set_last set_current
+  get_owner get_next get_last get_current get_first 
+  insert_after insert_first remove_view 
+  children sanity_check
 );
 
 use Hash::Util::FieldHash qw(fieldhashes id register id_2obj);
 
 # Per-object fields keyed by the wrapper objects.
-fieldhashes \my (%owner_id, %next_id, %last_id, %current_id);
+fieldhashes \our (%OWNER, %NEXT, %LAST, %CURRENT);
 
 #--- internals --------------------------------------------------------------
 sub _reg { my ($o) = @_; register($o); return $o }
 sub _id  { my ($o) = @_; return defined $o ? (_reg($o), id $o)[1] : undef }
 
 #--- setters ----------------------------------------------------------------
-sub set_owner_id   { my ($view,  $group) = @_; $owner_id{$view}    = _id($group) }
-sub set_next_id    { my ($view,  $next ) = @_; $next_id{$view}     = _id($next)  }
-sub set_last_id    { my ($group, $last ) = @_; $last_id{$group}    = _id($last)  }
-sub set_current_id { my ($group, $cur  ) = @_; $current_id{$group} = _id($cur)   }
+sub set_owner   { my ($view,  $group) = @_; $OWNER{$view}    = _id($group) }
+sub set_next    { my ($view,  $next ) = @_; $NEXT{$view}     = _id($next)  }
+sub set_last    { my ($group, $last ) = @_; $LAST{$group}    = _id($last)  }
+sub set_current { my ($group, $cur  ) = @_; $CURRENT{$group} = _id($cur)   }
 
 #--- getters (ID -> object) -------------------------------------------------
-sub owner_of   { my ($view)  = @_; my $i = $owner_id{$view};    return defined $i ? id_2obj($i) : undef }
-sub next_of    { my ($view)  = @_; my $i = $next_id{$view};     return defined $i ? id_2obj($i) : undef }
-sub last_of    { my ($group) = @_; my $i = $last_id{$group};    return defined $i ? id_2obj($i) : undef }
-sub current_of { my ($group) = @_; my $i = $current_id{$group}; return defined $i ? id_2obj($i) : undef }
+sub get_owner   { my ($view)  = @_; my $i = $OWNER{$view};    return defined $i ? id_2obj($i) : undef }
+sub get_next    { my ($view)  = @_; my $i = $NEXT{$view};     return defined $i ? id_2obj($i) : undef }
+sub get_last    { my ($group) = @_; my $i = $LAST{$group};    return defined $i ? id_2obj($i) : undef }
+sub get_current { my ($group) = @_; my $i = $CURRENT{$group}; return defined $i ? id_2obj($i) : undef }
 
 #--- helpers ----------------------------------------------------------------
-sub first_of {
+sub get_first {
     my ($group) = @_;
-    my $last = last_of($group) or return undef;
-    return next_of($last);
+    my $last = get_last($group) or return undef;
+    return get_next($last);
 }
 
 sub children {
     my ($group) = @_;
-    my $first = first_of($group) or return ();
-    my @out; my $v = $first; my $guard = 0; my $max = 100000; # safety
+    my $first = get_first($group) or return ();
+    my @out; my $v = $first;
+    my $guard = 0; my $max = 10000; # safety
     do {
         push @out, $v;
-        $v = next_of($v);
+        $v = get_next($v);
     } while defined($v) && $v != $first && ++$guard < $max;
     return @out;
 }
@@ -55,17 +57,17 @@ sub children {
 sub insert_after {
     my ($group, $target, $new) = @_;
     die "insert_after: target belongs to different group"
-        if owner_of($target) && owner_of($target) != $group;
+        if get_owner($target) && get_owner($target) != $group;
 
-    my $next = next_of($target) // $target;  # single-node ring or unlinked target
-    set_next_id($new,   $next);
-    set_next_id($target,$new);
-    set_owner_id($new,  $group);
-    if (defined(my $last = last_of($group))) {
-        set_last_id($group, $new) if $target == $last;  # append
+    my $next = get_next($target) // $target;  # single-node ring or unlinked target
+    set_next($new,   $next);
+    set_next($target,$new);
+    set_owner($new,  $group);
+    if (defined(my $last = get_last($group))) {
+        set_last($group, $new) if $target == $last;  # append
     } else {
         # group was empty; establish last
-        set_last_id($group, $new);
+        set_last($group, $new);
     }
     return $new;
 }
@@ -73,12 +75,12 @@ sub insert_after {
 # Insert $new as first child of $group (keeps ring order semantics)
 sub insert_first {
     my ($group, $new) = @_;
-    if (my $last = last_of($group)) {
+    if (my $last = get_last($group)) {
         insert_after($group, $last, $new);
     } else {
-        set_next_id($new,   $new);   # single-node ring
-        set_owner_id($new,  $group);
-        set_last_id($group, $new);
+        set_next($new,   $new);   # single-node ring
+        set_owner($new,  $group);
+        set_last($group, $new);
     }
     return $new;
 }
@@ -86,67 +88,86 @@ sub insert_first {
 # Remove $view from group's ring. Returns true if removed.
 sub remove_view {
     my ($group, $view) = @_;
-    my $last = last_of($group) or return 0;          # empty group
+    my $last = get_last($group) or return 0;          # empty group
     die "remove_view: node not in this group" 
-        if owner_of($view) && owner_of($view) != $group;
+        if get_owner($view) && get_owner($view) != $group;
 
-    my $first = next_of($last);
+    my $first = get_next($last);
     my $pred;
     my $v = $first;
     { 
         do {
-            if (next_of($v) && next_of($v) == $view) { $pred = $v; last }
-            $v = next_of($v);
+            if (get_next($v) && get_next($v) == $view) { $pred = $v; last }
+            $v = get_next($v);
         } while $v && $v != $first;
     }
     return 0 unless $pred;                           # not linked
 
-    my $view_next = next_of($view);
-    set_next_id($pred, $view_next);
+    my $view_next = get_next($view);
+    set_next($pred, $view_next);
 
     if ($view == $last) {
         if ($view_next == $view) {
             # was single element
-            set_last_id($group, undef);
+            set_last($group, undef);
         } else {
-            set_last_id($group, $pred);
+            set_last($group, $pred);
         }
     }
 
     # detach
-    set_owner_id($view, undef);
-    set_next_id($view,  undef);
+    set_owner($view, undef);
+    set_next($view,  undef);
     return 1;
 }
 
-# Validate ring invariants; return undef on success or an error string
+# Validate ring variants; return true on successful otherwise false and 
+# issue a warning
 sub sanity_check {
     my ($group) = @_;
-    my $last = last_of($group);
-    my $first = first_of($group);
+    my $last = get_last($group);
+    my $first = get_first($group);
 
     if (!$last) {
-        return defined($first) 
-            ? 'first set but last undef' 
-            : undef;    # empty is fine
+        if ( defined($first) ) { 
+            warn 'first set but last undef'; 
+            return
+        }
+        return !!1;    # empty is fine
     }
 
-    return 'first undef although last is set' unless $first;
+    unless ( $first ) {
+        warn 'first undef although last is set';
+        return
+    }
 
     # Walk ring and collect
     my %seen; my @nodes;
-    my $v = $first; my $guard = 0; my $max = 100000;
+    my $v = $first;
+    my $guard = 0; my $max = 10000;
     do {
-        return 'owner mismatch' unless owner_of($v) && owner_of($v) == $group;
+        unless ( get_owner($v) && get_owner($v) == $group ) {
+            warn 'owner mismatch';
+            return
+        }
         my $k = id($v);
-        return 'duplicate node in ring' if $seen{$k}++;
+        if ( $seen{$k}++ ) {
+            warn 'duplicate node in ring';
+            return
+        }
         push @nodes, $v;
-        $v = next_of($v);
+        $v = get_next($v);
     } while defined($v) && $v != $first && ++$guard < $max;
 
-    return 'ring not closed or too long' if $guard >= $max;
-    return 'last not in ring' unless grep { $_ == $last } @nodes;
-    return undef;
+    if ( $guard >= $max ) {
+        warn 'ring not closed or too long';
+        return
+    }
+    unless ( grep { $_ == $last } @nodes ) {
+        warn 'last not in ring';
+        return
+    }
+    return !!1;
 }
 
 1;
@@ -175,7 +196,7 @@ Version 0.01
   insert_first($g, $a);
   insert_after($g, $a, $b);
 
-  my $first = first_of($g);     # $a
+  my $first = get_first($g);    # $a
   my @kids  = children($g);     # ($a, $b)
   remove_view($g, $a);
 
@@ -199,30 +220,30 @@ C<first> ist definiert als C<next(last)>.
 
 Das Modul exportiert auf Anfrage (C<@EXPORT_OK>):
 
-  set_owner_id set_next_id set_last_id set_current_id
-  owner_of next_of last_of current_of first_of children
+  set_owner set_next set_last set_current
+  get_owner get_next get_last get_current get_first children
   insert_after insert_first remove_view sanity_check
 
 =head1 API
 
 =over 2
 
-=item B<set_owner_id($view, $group)>
+=item B<set_owner($view, $group)>
 
-=item B<set_next_id($view, $next_view)>
+=item B<set_next($view, $next_view)>
 
-=item B<set_last_id($group, $last_child)>
+=item B<set_last($group, $last_child)>
 
-=item B<set_current_id($group, $current_child)>
+=item B<set_current($group, $current_child)>
 
 Speichern nur IDs, keine Referenzen. C<undef> löscht den link.
 
-=item B<owner_of($view)> / B<next_of($view)> / B<last_of($group)> / 
-B<current_of($group)>
+=item B<get_owner($view)> / B<get_next($view)> / B<get_last($group)> / 
+B<get_current($group)>
 
 Gibt das Objekt zurück oder C<undef>, falls nicht auflösbar.
 
-=item B<first_of($group)>
+=item B<get_first($group)>
 
 Gibt C<next(last($group))> oder C<undef> (leere Gruppe).
 
